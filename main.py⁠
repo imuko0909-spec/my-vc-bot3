@@ -1,19 +1,22 @@
 import discord
 import os
-import threading
 from discord.ext import commands
 from flask import Flask
+from threading import Thread
 
-# 1. Flask（Webサーバー）設定
+# Flaskサーバー設定
 app = Flask(__name__)
 @app.route('/')
 def home():
     return "Bot is alive!"
 
-def run_flask():
+def run():
     app.run(host='0.0.0.0', port=8080)
 
-# 2. Discordボット設定
+# サーバー起動
+Thread(target=run).start()
+
+# Bot設定
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
@@ -22,12 +25,14 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 room_owners = {}
 room_counter = 1
 
-# 3. ボイスチャンネル作成コマンド
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user}')
+
 @bot.command()
 async def create_vc(ctx):
     global room_counter
     guild = ctx.guild
-    
     room_name = f"#{room_counter:03} 部屋"
     room_counter += 1
     
@@ -40,7 +45,7 @@ async def create_vc(ctx):
     room_owners[vc.id] = ctx.author.id
     await ctx.send(f"{room_name} を作成しました。")
 
-# 4. ボイスチャンネルの自動管理
+# ボイスチャンネル自動管理
 @bot.event
 async def on_voice_state_update(member, before, after):
     global room_owners
@@ -49,21 +54,16 @@ async def on_voice_state_update(member, before, after):
         if not vc:
             del room_owners[vc_id]
             continue
-            
-        current_count = len(vc.members)
-        if current_count == 0:
+        if len(vc.members) == 0:
             await vc.delete()
             del room_owners[vc_id]
-        elif current_count >= vc.user_limit:
+        elif len(vc.members) >= vc.user_limit:
             await vc.edit(name=f"[満員] {vc.name.split('] ')[-1]}")
         else:
             await vc.edit(name=f"[空室] {vc.name.split('] ')[-1]}")
 
-@bot.event
-async def on_ready():
-    print(f'Logged in as {bot.user}')
+# 最後にBot起動
+bot.run(os.environ['DISCORD_TOKEN'])
 
-# 5. 起動処理（WebサーバーとBotを同時に動かす）
-if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    bot.run(os.environ['DISCORD_TOKEN'])
+
+    
