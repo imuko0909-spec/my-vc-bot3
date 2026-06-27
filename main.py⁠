@@ -1,0 +1,62 @@
+import discord
+from discord.ext import commands
+from flask import Flask
+from threading import Thread
+import os
+
+# --- Flask（Webサーバー）設定 ---
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+t = Thread(target=run)
+t.start()
+
+# --- Discordボット設定 ---
+intents = discord.Intents.default()
+intents.message_content = True
+intents.voice_states = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+room_owners = {}
+room_counter = 1
+
+class RoomView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="🔑 部屋を作成", style=discord.ButtonStyle.primary, custom_id="create_vc")
+    async def create_vc(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global room_counter
+        guild = interaction.guild
+        room_name = f"#{room_counter:03} 部屋"
+        room_counter += 1
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(connect=False),
+            interaction.user: discord.PermissionOverwrite(connect=True, manage_channels=True)
+        }
+        vc = await guild.create_voice_channel(room_name, overwrites=overwrites, user_limit=2)
+        room_owners[vc.id] = interaction.user.id
+        await interaction.response.send_message(f"{room_name} を作成しました。", ephemeral=True)
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    for vc_id, owner_id in room_owners.items():
+        vc = member.guild.get_channel(vc_id)
+        if not vc: continue
+        current_count = len(vc.members)
+        if current_count == 0:
+            await vc.delete()
+            del room_owners[vc_id]
+            break
+
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user}')
+
+# --- 最後にこれを忘れない ---
+bot.run(os.environ['DISCORD_TOKEN'])
