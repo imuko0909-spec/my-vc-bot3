@@ -57,6 +57,9 @@ async def on_voice_state_update(member, before, after):
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
+@bot.command()
+async def create_vc(ctx):
+    await ctx.send("チャンネルを作ります！")
 
 # --- 最後にこれを忘れない ---
 bot.run(os.environ['DISCORD_TOKEN'])
