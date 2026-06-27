@@ -61,7 +61,12 @@ async def on_ready():
 @bot.command()
 async def create_vc(ctx):
     await ctx.send("チャンネルを作成します！")
-    
+
+# 試しにコマンド名を 'makevc' にしてみましょう
+@bot.command()
+async def makevc(ctx):
+    await ctx.send("チャンネルを作ります！")
+
 
 # --- 最後にこれを忘れない ---
 bot.run(os.environ['DISCORD_TOKEN'])
