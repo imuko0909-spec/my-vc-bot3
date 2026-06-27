@@ -1,22 +1,19 @@
 import discord
 import os
+import threading
 from discord.ext import commands
 from flask import Flask
-from threading import Thread
 
-# Flaskサーバー設定
+# 1. Flask（Webサーバー）設定
 app = Flask(__name__)
 @app.route('/')
 def home():
     return "Bot is alive!"
 
-def run():
+def run_flask():
     app.run(host='0.0.0.0', port=8080)
 
-# サーバー起動
-Thread(target=run).start()
-
-# Bot設定
+# 2. Discordボット設定
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
@@ -25,27 +22,32 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 room_owners = {}
 room_counter = 1
 
-@bot.event
-async def on_ready():
-    print(f'Logged in as {bot.user}')
+# ボタンのクラス
+class RoomView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
+    @discord.ui.button(label="🔑 部屋を作成", style=discord.ButtonStyle.primary)
+    async def create_vc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global room_counter
+        guild = interaction.guild
+        room_name = f"#{room_counter:03} 部屋"
+        room_counter += 1
+        
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(connect=True),
+            interaction.user: discord.PermissionOverwrite(connect=True, manage_channels=True)
+        }
+        vc = await guild.create_voice_channel(room_name, overwrites=overwrites, user_limit=2)
+        room_owners[vc.id] = interaction.user.id
+        await interaction.response.send_message(f"{room_name} を作成しました。", ephemeral=True)
+
+# ボタンを表示するためのコマンド
 @bot.command()
-async def create_vc(ctx):
-    global room_counter
-    guild = ctx.guild
-    room_name = f"#{room_counter:03} 部屋"
-    room_counter += 1
-    
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(connect=True),
-        ctx.author: discord.PermissionOverwrite(connect=True, manage_channels=True)
-    }
-    
-    vc = await guild.create_voice_channel(room_name, overwrites=overwrites, user_limit=2)
-    room_owners[vc.id] = ctx.author.id
-    await ctx.send(f"{room_name} を作成しました。")
+async def setup(ctx):
+    await ctx.send("下のボタンを押すと部屋が作成されます！", view=RoomView())
 
-# ボイスチャンネル自動管理
+# 3. ボイスチャンネル自動管理
 @bot.event
 async def on_voice_state_update(member, before, after):
     global room_owners
@@ -62,8 +64,11 @@ async def on_voice_state_update(member, before, after):
         else:
             await vc.edit(name=f"[空室] {vc.name.split('] ')[-1]}")
 
-# 最後にBot起動
-bot.run(os.environ['DISCORD_TOKEN'])
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user}')
 
-
-    
+# 4. 起動処理
+if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
+    bot.run(os.environ['DISCORD_TOKEN'])
