@@ -1,74 +1,1588 @@
-import discord
+from __future__ import annotations
+
+import asyncio
+import logging
 import os
-import threading
+import re
+import sqlite3
+from pathlib import Path
+from typing import Optional
+
+import discord
+from discord import app_commands
 from discord.ext import commands
-from flask import Flask
 
-# 1. Flask（Webサーバー）設定
-app = Flask(__name__)
-@app.route('/')
-def home():
-    return "Bot is alive!"
 
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
+# =========================================================
+# 基本設定
+# =========================================================
 
-# 2. Discordボット設定
+TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
+
+GUILD_ID = 1518584863454658611
+
+ROOM_CATEGORY_ID = 1528925791327485972
+SILENT_CATEGORY_ID = 1528925791327485972
+
+PANEL_CHANNEL_ID = 1528926273647284345
+
+MALE_PROFILE_CHANNEL_ID = 1528914705517645935
+FEMALE_PROFILE_CHANNEL_ID = 1528914803689783417
+
+ADMIN_LOG_CHANNEL_ID = 1524030913023967232
+ADMIN_ROLE_ID = 1518585500783480985
+
+EMPTY_DELETE_SECONDS = 15
+
+DB_PATH = "data/melty_rooms.db"
+
+
+# =========================================================
+# Logging / DB
+# =========================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+log = logging.getLogger("melty-room-bot")
+
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+
+def db_connect():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    with db_connect() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rooms (
+                voice_id INTEGER PRIMARY KEY,
+                text_id INTEGER NOT NULL,
+                owner_id INTEGER NOT NULL,
+                max_members INTEGER NOT NULL,
+                silent INTEGER NOT NULL DEFAULT 0,
+                locked INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS profile_cache (
+                user_id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL
+            )
+            """
+        )
+
+        conn.commit()
+
+
+init_db()
+
+
+# =========================================================
+# Discord Bot
+# =========================================================
+
 intents = discord.Intents.default()
-intents.message_content = True
+intents.guilds = True
+intents.members = True
 intents.voice_states = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+intents.message_content = True
 
-room_owners = {}
-room_counter = 1
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents,
+)
 
-# ボタンのクラス
-class RoomView(discord.ui.View):
+delete_tasks: dict[int, asyncio.Task] = {}
+
+
+# =========================================================
+# DB helpers
+# =========================================================
+
+def save_room(
+    voice_id: int,
+    text_id: int,
+    owner_id: int,
+    max_members: int,
+    silent: bool,
+    locked: bool = False,
+):
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO rooms
+            (voice_id, text_id, owner_id, max_members, silent, locked)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                voice_id,
+                text_id,
+                owner_id,
+                max_members,
+                int(silent),
+                int(locked),
+            ),
+        )
+        conn.commit()
+
+
+def get_room(voice_id: int):
+    with db_connect() as conn:
+        return conn.execute(
+            "SELECT * FROM rooms WHERE voice_id = ?",
+            (voice_id,),
+        ).fetchone()
+
+
+def get_room_by_text(text_id: int):
+    with db_connect() as conn:
+        return conn.execute(
+            "SELECT * FROM rooms WHERE text_id = ?",
+            (text_id,),
+        ).fetchone()
+
+
+def delete_room_record(voice_id: int):
+    with db_connect() as conn:
+        conn.execute(
+            "DELETE FROM rooms WHERE voice_id = ?",
+            (voice_id,),
+        )
+        conn.commit()
+
+
+def update_room_lock(voice_id: int, locked: bool):
+    with db_connect() as conn:
+        conn.execute(
+            "UPDATE rooms SET locked = ? WHERE voice_id = ?",
+            (int(locked), voice_id),
+        )
+        conn.commit()
+
+
+def update_room_limit(voice_id: int, limit: int):
+    with db_connect() as conn:
+        conn.execute(
+            "UPDATE rooms SET max_members = ? WHERE voice_id = ?",
+            (limit, voice_id),
+        )
+        conn.commit()
+
+
+def cache_profile(user_id: int, channel_id: int, message_id: int):
+    with db_connect() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO profile_cache
+            (user_id, channel_id, message_id)
+            VALUES (?, ?, ?)
+            """,
+            (user_id, channel_id, message_id),
+        )
+        conn.commit()
+
+
+def get_cached_profile(user_id: int):
+    with db_connect() as conn:
+        return conn.execute(
+            """
+            SELECT * FROM profile_cache
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+
+def clear_profile_cache(user_id: int):
+    with db_connect() as conn:
+        conn.execute(
+            "DELETE FROM profile_cache WHERE user_id = ?",
+            (user_id,),
+        )
+        conn.commit()
+
+
+# =========================================================
+# Utility
+# =========================================================
+
+def is_admin(member: discord.Member) -> bool:
+    if member.guild_permissions.administrator:
+        return True
+
+    return any(role.id == ADMIN_ROLE_ID for role in member.roles)
+
+
+def owner_or_admin(
+    member: discord.Member,
+    room,
+) -> bool:
+    return (
+        member.id == room["owner_id"]
+        or is_admin(member)
+    )
+
+
+async def send_log(
+    guild: discord.Guild,
+    text: str,
+):
+    channel = guild.get_channel(ADMIN_LOG_CHANNEL_ID)
+
+    if not isinstance(channel, discord.TextChannel):
+        return
+
+    try:
+        await channel.send(text)
+    except discord.HTTPException:
+        pass
+
+
+async def find_profile_message(
+    member: discord.Member,
+) -> Optional[discord.Message]:
+
+    guild = member.guild
+
+    # -----------------------------------------
+    # まずキャッシュ
+    # -----------------------------------------
+
+    cached = get_cached_profile(member.id)
+
+    if cached:
+        channel = guild.get_channel(cached["channel_id"])
+
+        if isinstance(channel, discord.TextChannel):
+            try:
+                msg = await channel.fetch_message(
+                    cached["message_id"]
+                )
+
+                if msg.author.id == member.id:
+                    return msg
+
+            except (
+                discord.NotFound,
+                discord.Forbidden,
+                discord.HTTPException,
+            ):
+                pass
+
+        clear_profile_cache(member.id)
+
+    # -----------------------------------------
+    # 男性 / 女性プロフィールから検索
+    # -----------------------------------------
+
+    channel_ids = [
+        MALE_PROFILE_CHANNEL_ID,
+        FEMALE_PROFILE_CHANNEL_ID,
+    ]
+
+    for channel_id in channel_ids:
+
+        channel = guild.get_channel(channel_id)
+
+        if not isinstance(channel, discord.TextChannel):
+            continue
+
+        try:
+            async for message in channel.history(
+                limit=1000,
+                oldest_first=False,
+            ):
+                if message.author.id == member.id:
+
+                    cache_profile(
+                        member.id,
+                        channel.id,
+                        message.id,
+                    )
+
+                    return message
+
+        except discord.Forbidden:
+            log.warning(
+                "プロフィールチャンネルを閲覧できません: %s",
+                channel.id,
+            )
+
+        except discord.HTTPException:
+            pass
+
+    return None
+
+
+class ProfileLinkView(discord.ui.View):
+
+    def __init__(self, url: str):
+        super().__init__(timeout=120)
+
+        self.add_item(
+            discord.ui.Button(
+                label="プロフィールを見る",
+                emoji="👤",
+                style=discord.ButtonStyle.link,
+                url=url,
+            )
+        )
+
+
+async def send_profile(
+    member: discord.Member,
+    text_channel: discord.TextChannel,
+):
+
+    profile = await find_profile_message(member)
+
+    if profile:
+
+        text = profile.content.strip()
+
+        if not text:
+            text = "プロフィール本文はありません。"
+
+        if len(text) > 3800:
+            text = text[:3800] + "\n\n…続きは元プロフィールから確認してください。"
+
+        embed = discord.Embed(
+            title=f"🌙 {member.display_name} さんが入室しました",
+            description=text,
+            color=discord.Color.from_rgb(
+                210,
+                150,
+                255,
+            ),
+        )
+
+        embed.set_thumbnail(
+            url=member.display_avatar.url
+        )
+
+        embed.set_footer(
+            text="𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 🌙"
+        )
+
+        await text_channel.send(
+            embed=embed,
+            view=ProfileLinkView(profile.jump_url),
+        )
+
+    else:
+
+        embed = discord.Embed(
+            title=f"🌙 {member.display_name} さんが入室しました",
+            description=(
+                "プロフィール投稿が見つかりませんでした。\n"
+                "男性プロフィール / 女性プロフィールから"
+                "プロフィールをご確認ください。"
+            ),
+            color=discord.Color.from_rgb(
+                210,
+                150,
+                255,
+            ),
+        )
+
+        embed.set_thumbnail(
+            url=member.display_avatar.url
+        )
+
+        await text_channel.send(embed=embed)
+
+
+# =========================================================
+# Room Creation
+# =========================================================
+
+async def get_owned_room(
+    member: discord.Member,
+):
+
+    with db_connect() as conn:
+        row = conn.execute(
+            """
+            SELECT *
+            FROM rooms
+            WHERE owner_id = ?
+            LIMIT 1
+            """,
+            (member.id,),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    voice = member.guild.get_channel(
+        row["voice_id"]
+    )
+
+    if voice is None:
+        delete_room_record(row["voice_id"])
+        return None
+
+    return row
+
+
+async def create_room(
+    interaction: discord.Interaction,
+    limit: int,
+    silent: bool = False,
+):
+
+    if not interaction.guild:
+        return
+
+    member = interaction.user
+
+    if not isinstance(member, discord.Member):
+        return
+
+    existing = await get_owned_room(member)
+
+    if existing:
+
+        await interaction.response.send_message(
+            "⚠️ すでにあなたが作成した部屋があります。",
+            ephemeral=True,
+        )
+
+        return
+
+    if not member.voice or not member.voice.channel:
+
+        await interaction.response.send_message(
+            "🌙 先にどこかのVCへ入ってからボタンを押してください。",
+            ephemeral=True,
+        )
+
+        return
+
+    guild = interaction.guild
+
+    category_id = (
+        SILENT_CATEGORY_ID
+        if silent
+        else ROOM_CATEGORY_ID
+    )
+
+    category = guild.get_channel(category_id)
+
+    if not isinstance(
+        category,
+        discord.CategoryChannel,
+    ):
+        await interaction.response.send_message(
+            "❌ 作成カテゴリーが見つかりません。",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.defer(
+        ephemeral=True,
+    )
+
+    default_role = guild.default_role
+
+    # -----------------------------------------
+    # VC 権限
+    # -----------------------------------------
+
+    voice_overwrites = {
+        default_role: discord.PermissionOverwrite(
+            view_channel=True,
+            connect=True,
+            speak=False if silent else None,
+        ),
+        member: discord.PermissionOverwrite(
+            view_channel=True,
+            connect=True,
+            speak=False if silent else True,
+            manage_channels=True,
+        ),
+    }
+
+    admin_role = guild.get_role(ADMIN_ROLE_ID)
+
+    if admin_role:
+
+        voice_overwrites[
+            admin_role
+        ] = discord.PermissionOverwrite(
+            view_channel=True,
+            connect=True,
+            speak=True,
+            manage_channels=True,
+        )
+
+    room_type = (
+        "無音"
+        if silent
+        else f"{limit}人"
+    )
+
+    voice = await guild.create_voice_channel(
+        name=f"🌙｜{member.display_name}・{room_type}",
+        category=category,
+        user_limit=limit if not silent else 0,
+        overwrites=voice_overwrites,
+        reason="Melty Moon 少人数ルーム作成",
+    )
+
+    # -----------------------------------------
+    # 専用TC
+    # -----------------------------------------
+
+    text_overwrites = {
+        default_role: discord.PermissionOverwrite(
+            view_channel=False,
+        ),
+        member: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+        ),
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_channels=True,
+        ),
+    }
+
+    if admin_role:
+
+        text_overwrites[
+            admin_role
+        ] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_channels=True,
+        )
+
+    text = await guild.create_text_channel(
+        name=f"🌙-{member.display_name}-room",
+        category=category,
+        overwrites=text_overwrites,
+        reason="Melty Moon 専用TC作成",
+    )
+
+    save_room(
+        voice.id,
+        text.id,
+        member.id,
+        limit,
+        silent,
+    )
+
+    # -----------------------------------------
+    # 作成者を移動
+    # -----------------------------------------
+
+    try:
+        await member.move_to(voice)
+    except discord.HTTPException:
+        pass
+
+    # -----------------------------------------
+    # TC案内
+    # -----------------------------------------
+
+    embed = discord.Embed(
+        title="🌙 𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 Room",
+        description=(
+            f"部屋主：{member.mention}\n"
+            f"種類：**{room_type}ルーム**\n\n"
+            "下のボタンから部屋を操作できます。"
+        ),
+        color=discord.Color.from_rgb(
+            210,
+            150,
+            255,
+        ),
+    )
+
+    if silent:
+
+        embed.add_field(
+            name="🔇 無音ルーム",
+            value=(
+                "このVCでは音声での会話はできません。\n"
+                "この専用TCを使ってチャットしてください。"
+            ),
+            inline=False,
+        )
+
+    await text.send(
+        embed=embed,
+        view=RoomControlView(),
+    )
+
+    await interaction.followup.send(
+        f"✅ {voice.mention} を作成しました！",
+        ephemeral=True,
+    )
+
+    await send_log(
+        guild,
+        (
+            f"🌙 ルーム作成\n"
+            f"作成者: {member} ({member.id})\n"
+            f"VC: {voice.name}\n"
+            f"種類: {room_type}"
+        ),
+    )
+
+
+# =========================================================
+# Delete
+# =========================================================
+
+async def delete_room(
+    voice: discord.VoiceChannel,
+):
+
+    room = get_room(voice.id)
+
+    if not room:
+        return
+
+    text = voice.guild.get_channel(
+        room["text_id"]
+    )
+
+    try:
+        if isinstance(
+            text,
+            discord.TextChannel,
+        ):
+            await text.delete(
+                reason="Melty Moon ルーム削除"
+            )
+    except discord.HTTPException:
+        pass
+
+    try:
+        await voice.delete(
+            reason="Melty Moon ルーム削除"
+        )
+    except discord.HTTPException:
+        pass
+
+    delete_room_record(voice.id)
+
+
+async def schedule_delete(
+    voice: discord.VoiceChannel,
+):
+
+    old = delete_tasks.pop(
+        voice.id,
+        None,
+    )
+
+    if old:
+        old.cancel()
+
+    async def runner():
+
+        try:
+            await asyncio.sleep(
+                EMPTY_DELETE_SECONDS
+            )
+
+            fresh = voice.guild.get_channel(
+                voice.id
+            )
+
+            if (
+                isinstance(
+                    fresh,
+                    discord.VoiceChannel,
+                )
+                and len(fresh.members) == 0
+            ):
+                await delete_room(fresh)
+
+        except asyncio.CancelledError:
+            return
+
+        finally:
+            delete_tasks.pop(
+                voice.id,
+                None,
+            )
+
+    delete_tasks[
+        voice.id
+    ] = asyncio.create_task(
+        runner()
+    )
+
+
+# =========================================================
+# Creation Panel
+# =========================================================
+
+class RoomCreateView(discord.ui.View):
+
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="🔑 部屋を作成", style=discord.ButtonStyle.primary)
-    async def create_vc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        global room_counter
+    @discord.ui.button(
+        label="3人部屋",
+        emoji="👥",
+        style=discord.ButtonStyle.primary,
+        custom_id="melty:create:3",
+    )
+    async def room3(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await create_room(
+            interaction,
+            3,
+            False,
+        )
+
+    @discord.ui.button(
+        label="4人部屋",
+        emoji="👥",
+        style=discord.ButtonStyle.primary,
+        custom_id="melty:create:4",
+    )
+    async def room4(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await create_room(
+            interaction,
+            4,
+            False,
+        )
+
+    @discord.ui.button(
+        label="5人部屋",
+        emoji="👥",
+        style=discord.ButtonStyle.primary,
+        custom_id="melty:create:5",
+    )
+    async def room5(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await create_room(
+            interaction,
+            5,
+            False,
+        )
+
+    @discord.ui.button(
+        label="無音部屋",
+        emoji="🔇",
+        style=discord.ButtonStyle.secondary,
+        custom_id="melty:create:silent",
+    )
+    async def silent_room(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        await create_room(
+            interaction,
+            0,
+            True,
+        )
+
+
+# =========================================================
+# Rename Modal
+# =========================================================
+
+class RenameModal(
+    discord.ui.Modal,
+    title="🌙 部屋名変更",
+):
+
+    room_name = discord.ui.TextInput(
+        label="新しい部屋名",
+        placeholder="例：まったり雑談",
+        max_length=50,
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        if not isinstance(
+            interaction.channel,
+            discord.TextChannel,
+        ):
+            return
+
+        room = get_room_by_text(
+            interaction.channel.id
+        )
+
+        if not room:
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+            return
+
+        if not owner_or_admin(
+            interaction.user,
+            room,
+        ):
+            await interaction.response.send_message(
+                "❌ 部屋主のみ変更できます。",
+                ephemeral=True,
+            )
+            return
+
+        voice = interaction.guild.get_channel(
+            room["voice_id"]
+        )
+
+        if isinstance(
+            voice,
+            discord.VoiceChannel,
+        ):
+            await voice.edit(
+                name=f"🌙｜{self.room_name.value}"
+            )
+
+        await interaction.response.send_message(
+            "✅ 部屋名を変更しました。",
+            ephemeral=True,
+        )
+
+
+# =========================================================
+# Invite Modal
+# =========================================================
+
+class InviteModal(
+    discord.ui.Modal,
+    title="🌙 メンバー招待",
+):
+
+    target = discord.ui.TextInput(
+        label="ユーザーID または メンション",
+        placeholder="例：123456789012345678",
+        max_length=50,
+    )
+
+    async def on_submit(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        if not isinstance(
+            interaction.channel,
+            discord.TextChannel,
+        ):
+            return
+
+        room = get_room_by_text(
+            interaction.channel.id
+        )
+
+        if not room:
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+            return
+
+        if not owner_or_admin(
+            interaction.user,
+            room,
+        ):
+            await interaction.response.send_message(
+                "❌ 部屋主のみ操作できます。",
+                ephemeral=True,
+            )
+            return
+
+        ids = re.findall(
+            r"\d{15,22}",
+            self.target.value,
+        )
+
+        if not ids:
+            await interaction.response.send_message(
+                "❌ 正しいユーザーIDを入力してください。",
+                ephemeral=True,
+            )
+            return
+
+        user_id = int(ids[0])
+
+        member = interaction.guild.get_member(
+            user_id
+        )
+
+        if not member:
+            await interaction.response.send_message(
+                "❌ メンバーが見つかりません。",
+                ephemeral=True,
+            )
+            return
+
+        voice = interaction.guild.get_channel(
+            room["voice_id"]
+        )
+
+        text = interaction.channel
+
+        if isinstance(
+            voice,
+            discord.VoiceChannel,
+        ):
+
+            await voice.set_permissions(
+                member,
+                view_channel=True,
+                connect=True,
+                speak=False
+                if room["silent"]
+                else True,
+            )
+
+        await text.set_permissions(
+            member,
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+        )
+
+        await interaction.response.send_message(
+            f"✅ {member.mention} を招待しました。",
+            ephemeral=True,
+        )
+
+
+# =========================================================
+# Limit Select
+# =========================================================
+
+class LimitSelect(
+    discord.ui.Select,
+):
+
+    def __init__(self):
+
+        options = [
+            discord.SelectOption(
+                label="2人",
+                value="2",
+            ),
+            discord.SelectOption(
+                label="3人",
+                value="3",
+            ),
+            discord.SelectOption(
+                label="4人",
+                value="4",
+            ),
+            discord.SelectOption(
+                label="5人",
+                value="5",
+            ),
+            discord.SelectOption(
+                label="6人",
+                value="6",
+            ),
+        ]
+
+        super().__init__(
+            placeholder="人数制限を変更",
+            options=options,
+            custom_id="melty:room:limit",
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction,
+    ):
+
+        if not isinstance(
+            interaction.channel,
+            discord.TextChannel,
+        ):
+            return
+
+        room = get_room_by_text(
+            interaction.channel.id
+        )
+
+        if not room:
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+            return
+
+        if not owner_or_admin(
+            interaction.user,
+            room,
+        ):
+            await interaction.response.send_message(
+                "❌ 部屋主のみ操作できます。",
+                ephemeral=True,
+            )
+            return
+
+        if room["silent"]:
+            await interaction.response.send_message(
+                "🔇 無音部屋では人数制限変更を使用しません。",
+                ephemeral=True,
+            )
+            return
+
+        limit = int(
+            self.values[0]
+        )
+
+        voice = interaction.guild.get_channel(
+            room["voice_id"]
+        )
+
+        if isinstance(
+            voice,
+            discord.VoiceChannel,
+        ):
+
+            await voice.edit(
+                user_limit=limit
+            )
+
+            update_room_limit(
+                voice.id,
+                limit,
+            )
+
+        await interaction.response.send_message(
+            f"✅ 人数制限を **{limit}人** に変更しました。",
+            ephemeral=True,
+        )
+
+
+# =========================================================
+# Room Control
+# =========================================================
+
+class RoomControlView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+        self.add_item(
+            LimitSelect()
+        )
+
+    @discord.ui.button(
+        label="名前変更",
+        emoji="✏️",
+        style=discord.ButtonStyle.secondary,
+        custom_id="melty:room:rename",
+    )
+    async def rename(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await interaction.response.send_modal(
+            RenameModal()
+        )
+
+    @discord.ui.button(
+        label="ロック / 解除",
+        emoji="🔐",
+        style=discord.ButtonStyle.primary,
+        custom_id="melty:room:lock",
+    )
+    async def lock(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        if not isinstance(
+            interaction.channel,
+            discord.TextChannel,
+        ):
+            return
+
+        room = get_room_by_text(
+            interaction.channel.id
+        )
+
+        if not room:
+            await interaction.response.send_message(
+                "❌ 部屋情報がありません。",
+                ephemeral=True,
+            )
+            return
+
+        if not owner_or_admin(
+            interaction.user,
+            room,
+        ):
+            await interaction.response.send_message(
+                "❌ 部屋主のみ操作できます。",
+                ephemeral=True,
+            )
+            return
+
+        voice = interaction.guild.get_channel(
+            room["voice_id"]
+        )
+
+        if not isinstance(
+            voice,
+            discord.VoiceChannel,
+        ):
+            return
+
+        locked = bool(
+            room["locked"]
+        )
+
+        new_locked = not locked
+
+        await voice.set_permissions(
+            interaction.guild.default_role,
+            view_channel=True,
+            connect=False
+            if new_locked
+            else True,
+            speak=False
+            if room["silent"]
+            else None,
+        )
+
+        update_room_lock(
+            voice.id,
+            new_locked,
+        )
+
+        await interaction.response.send_message(
+            "🔒 部屋をロックしました。"
+            if new_locked
+            else "🔓 ロックを解除しました。",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="招待",
+        emoji="➕",
+        style=discord.ButtonStyle.success,
+        custom_id="melty:room:invite",
+    )
+    async def invite(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        await interaction.response.send_modal(
+            InviteModal()
+        )
+
+    @discord.ui.button(
+        label="全招待解除",
+        emoji="➖",
+        style=discord.ButtonStyle.secondary,
+        custom_id="melty:room:clear_invites",
+    )
+    async def clear_invites(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        if not isinstance(
+            interaction.channel,
+            discord.TextChannel,
+        ):
+            return
+
+        room = get_room_by_text(
+            interaction.channel.id
+        )
+
+        if not room:
+            return
+
+        if not owner_or_admin(
+            interaction.user,
+            room,
+        ):
+            await interaction.response.send_message(
+                "❌ 部屋主のみ操作できます。",
+                ephemeral=True,
+            )
+            return
+
         guild = interaction.guild
-        room_name = f"#{room_counter:03} 部屋"
-        room_counter += 1
-        
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(connect=True),
-            interaction.user: discord.PermissionOverwrite(connect=True, manage_channels=True)
-        }
-        vc = await guild.create_voice_channel(room_name, overwrites=overwrites, user_limit=2)
-        room_owners[vc.id] = interaction.user.id
-        await interaction.response.send_message(f"{room_name} を作成しました。", ephemeral=True)
 
-# ボタンを表示するためのコマンド
-@bot.command()
-async def setup(ctx):
-    await ctx.send("下のボタンを押すと部屋が作成されます！", view=RoomView())
+        voice = guild.get_channel(
+            room["voice_id"]
+        )
 
-# 3. ボイスチャンネル自動管理
+        owner = guild.get_member(
+            room["owner_id"]
+        )
+
+        admin_role = guild.get_role(
+            ADMIN_ROLE_ID
+        )
+
+        if isinstance(
+            voice,
+            discord.VoiceChannel,
+        ):
+
+            for target in list(
+                voice.overwrites.keys()
+            ):
+                if (
+                    isinstance(
+                        target,
+                        discord.Member,
+                    )
+                    and owner
+                    and target.id
+                    != owner.id
+                ):
+                    try:
+                        await voice.set_permissions(
+                            target,
+                            overwrite=None,
+                        )
+                    except discord.HTTPException:
+                        pass
+
+        for target in list(
+            interaction.channel.overwrites.keys()
+        ):
+
+            if not isinstance(
+                target,
+                discord.Member,
+            ):
+                continue
+
+            if owner and target.id == owner.id:
+                continue
+
+            if target.id == bot.user.id:
+                continue
+
+            try:
+                await interaction.channel.set_permissions(
+                    target,
+                    overwrite=None,
+                )
+            except discord.HTTPException:
+                pass
+
+        await interaction.response.send_message(
+            "✅ 個別招待を解除しました。",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="部屋削除",
+        emoji="🗑️",
+        style=discord.ButtonStyle.danger,
+        custom_id="melty:room:delete",
+    )
+    async def delete(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+
+        if not isinstance(
+            interaction.channel,
+            discord.TextChannel,
+        ):
+            return
+
+        room = get_room_by_text(
+            interaction.channel.id
+        )
+
+        if not room:
+            return
+
+        if not owner_or_admin(
+            interaction.user,
+            room,
+        ):
+            await interaction.response.send_message(
+                "❌ 部屋主のみ削除できます。",
+                ephemeral=True,
+            )
+            return
+
+        voice = interaction.guild.get_channel(
+            room["voice_id"]
+        )
+
+        await interaction.response.send_message(
+            "🗑️ 部屋を削除します。",
+            ephemeral=True,
+        )
+
+        if isinstance(
+            voice,
+            discord.VoiceChannel,
+        ):
+            await delete_room(voice)
+
+
+# =========================================================
+# Voice Events
+# =========================================================
+
 @bot.event
-async def on_voice_state_update(member, before, after):
-    global room_owners
-    for vc_id, owner_id in list(room_owners.items()):
-        vc = member.guild.get_channel(vc_id)
-        if not vc:
-            del room_owners[vc_id]
-            continue
-        if len(vc.members) == 0:
-            await vc.delete()
-            del room_owners[vc_id]
-        elif len(vc.members) >= vc.user_limit:
-            await vc.edit(name=f"[満員] {vc.name.split('] ')[-1]}")
-        else:
-            await vc.edit(name=f"[空室] {vc.name.split('] ')[-1]}")
+async def on_voice_state_update(
+    member: discord.Member,
+    before: discord.VoiceState,
+    after: discord.VoiceState,
+):
+
+    # -----------------------------------------
+    # 入室
+    # -----------------------------------------
+
+    if (
+        after.channel
+        and after.channel != before.channel
+    ):
+
+        room = get_room(
+            after.channel.id
+        )
+
+        if room:
+
+            task = delete_tasks.pop(
+                after.channel.id,
+                None,
+            )
+
+            if task:
+                task.cancel()
+
+            text = member.guild.get_channel(
+                room["text_id"]
+            )
+
+            if isinstance(
+                text,
+                discord.TextChannel,
+            ):
+
+                # 入室した本人だけTCを見られるようにする
+                try:
+                    await text.set_permissions(
+                        member,
+                        view_channel=True,
+                        send_messages=True,
+                        read_message_history=True,
+                    )
+                except discord.HTTPException:
+                    pass
+
+                await send_profile(
+                    member,
+                    text,
+                )
+
+    # -----------------------------------------
+    # 退出
+    # -----------------------------------------
+
+    if (
+        before.channel
+        and before.channel != after.channel
+    ):
+
+        room = get_room(
+            before.channel.id
+        )
+
+        if room:
+
+            text = member.guild.get_channel(
+                room["text_id"]
+            )
+
+            # 部屋主以外は退出時に専用TCを見えなくする
+            if (
+                isinstance(
+                    text,
+                    discord.TextChannel,
+                )
+                and member.id
+                != room["owner_id"]
+                and not is_admin(member)
+            ):
+
+                try:
+                    await text.set_permissions(
+                        member,
+                        overwrite=None,
+                    )
+                except discord.HTTPException:
+                    pass
+
+            if len(before.channel.members) == 0:
+
+                await schedule_delete(
+                    before.channel
+                )
+
+
+# =========================================================
+# Panel Command
+# =========================================================
+
+@bot.tree.command(
+    name="roompanel",
+    description="Melty Moon 少人数ルームパネルを設置します",
+    guild=discord.Object(id=GUILD_ID),
+)
+@app_commands.default_permissions(
+    administrator=True
+)
+async def roompanel(
+    interaction: discord.Interaction,
+):
+
+    channel = interaction.guild.get_channel(
+        PANEL_CHANNEL_ID
+    )
+
+    if not isinstance(
+        channel,
+        discord.TextChannel,
+    ):
+        await interaction.response.send_message(
+            "❌ パネル設置チャンネルが見つかりません。",
+            ephemeral=True,
+        )
+        return
+
+    embed = discord.Embed(
+        title="🌙 𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 少人数ROOM",
+        description=(
+            "作りたいお部屋を選んでください✨\n\n"
+            "👥 **3人部屋**\n"
+            "👥 **4人部屋**\n"
+            "👥 **5人部屋**\n"
+            "🔇 **無音部屋** ─ VC＋チャット専用TC\n\n"
+            "誰かが入室すると、"
+            "その人のプロフィールが専用TCに表示されます🌙"
+        ),
+        color=discord.Color.from_rgb(
+            210,
+            150,
+            255,
+        ),
+    )
+
+    embed.set_footer(
+        text="𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 🌙"
+    )
+
+    await channel.send(
+        embed=embed,
+        view=RoomCreateView(),
+    )
+
+    await interaction.response.send_message(
+        "✅ パネルを設置しました。",
+        ephemeral=True,
+    )
+
+
+# =========================================================
+# Ready
+# =========================================================
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user}')
 
-# 4. 起動処理
-if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    bot.run(os.environ['DISCORD_TOKEN'])
+    bot.add_view(
+        RoomCreateView()
+    )
+
+    bot.add_view(
+        RoomControlView()
+    )
+
+    guild = bot.get_guild(
+        GUILD_ID
+    )
+
+    if guild:
+
+        try:
+            bot.tree.copy_global_to(
+                guild=discord.Object(
+                    id=GUILD_ID
+                )
+            )
+
+            await bot.tree.sync(
+                guild=discord.Object(
+                    id=GUILD_ID
+                )
+            )
+
+        except Exception:
+            log.exception(
+                "コマンド同期エラー"
+            )
+
+    log.info(
+        "ログイン完了: %s",
+        bot.user,
+    )
+
+
+# =========================================================
+# Start
+# =========================================================
+
+if not TOKEN:
+    raise RuntimeError(
+        "DISCORD_TOKEN が設定されていません。"
+    )
+
+bot.run(TOKEN)
