@@ -5,7 +5,9 @@ import logging
 import os
 import re
 import sqlite3
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from typing import Optional
 
 import discord
@@ -18,6 +20,9 @@ from discord.ext import commands
 # =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
+
+# Render Web Service 用
+PORT = int(os.getenv("PORT", "10000"))
 
 # サーバー
 GUILD_ID = 1518584863454658611
@@ -37,7 +42,7 @@ FEMALE_PROFILE_CHANNEL_ID = 1528914803689783417
 ADMIN_LOG_CHANNEL_ID = 1524030913023967232
 ADMIN_ROLE_ID = 1518585500783480985
 
-# 🆕 新規参加時に自動付与
+# 新規参加時に自動付与
 TRIAL_MEMBER_ROLE_ID = 1528942901521023069
 
 # 空室になってから削除まで
@@ -57,6 +62,47 @@ logging.basicConfig(
 )
 
 log = logging.getLogger("melty-moon")
+
+
+# =========================================================
+# Render Health Server
+# =========================================================
+
+class HealthHandler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header(
+            "Content-Type",
+            "text/plain; charset=utf-8",
+        )
+        self.end_headers()
+        self.wfile.write(
+            "Melty Moon Bot is running!".encode("utf-8")
+        )
+
+    def log_message(self, format, *args):
+        return
+
+
+def start_health_server():
+
+    server = ThreadingHTTPServer(
+        ("0.0.0.0", PORT),
+        HealthHandler,
+    )
+
+    thread = Thread(
+        target=server.serve_forever,
+        daemon=True,
+    )
+
+    thread.start()
+
+    log.info(
+        "Health server started on port %s",
+        PORT,
+    )
 
 
 # =========================================================
@@ -123,7 +169,6 @@ bot = commands.Bot(
 )
 
 
-# VC削除待機タスク
 delete_tasks: dict[int, asyncio.Task] = {}
 
 
@@ -371,7 +416,7 @@ async def send_log(
 
 
 # =========================================================
-# 🆕 新規参加
+# 新規参加
 # お試しメンバー自動付与
 # =========================================================
 
@@ -380,11 +425,9 @@ async def on_member_join(
     member: discord.Member,
 ):
 
-    # Melty Moonのみ
     if member.guild.id != GUILD_ID:
         return
 
-    # Botには付与しない
     if member.bot:
         return
 
@@ -395,8 +438,7 @@ async def on_member_join(
     if role is None:
 
         log.error(
-            "お試しメンバーロールが見つかりません。"
-            " ID=%s",
+            "お試しメンバーロールが見つかりません。ID=%s",
             TRIAL_MEMBER_ROLE_ID,
         )
 
@@ -475,10 +517,6 @@ async def find_profile_message(
 
     guild = member.guild
 
-    # -----------------------------------------------------
-    # キャッシュ確認
-    # -----------------------------------------------------
-
     cached = get_cached_profile(
         member.id
     )
@@ -514,10 +552,6 @@ async def find_profile_message(
         clear_profile_cache(
             member.id
         )
-
-    # -----------------------------------------------------
-    # 男性 / 女性プロフィールから検索
-    # -----------------------------------------------------
 
     profile_channels = [
         MALE_PROFILE_CHANNEL_ID,
@@ -609,7 +643,6 @@ async def send_profile(
         if not text:
             text = "プロフィール本文はありません。"
 
-        # Discord Embed上限対策
         if len(text) > 3800:
 
             text = (
@@ -704,7 +737,6 @@ async def get_owned_room(
         row["voice_id"]
     )
 
-    # DBだけ残っていた場合
     if voice is None:
 
         delete_room_record(
@@ -729,6 +761,12 @@ async def create_room(
     if not interaction.guild:
         return
 
+    if not interaction.response.is_done():
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
     member = interaction.user
 
     if not isinstance(
@@ -736,6 +774,8 @@ async def create_room(
         discord.Member,
     ):
         return
+
+    guild = interaction.guild
 
     # -----------------------------------------------------
     # 既に自分の部屋があるか
@@ -747,7 +787,7 @@ async def create_room(
 
     if existing:
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "⚠️ すでにあなたが作成した"
             "ルームがあります。",
             ephemeral=True,
@@ -756,23 +796,9 @@ async def create_room(
         return
 
     # -----------------------------------------------------
-    # VCに入っているか
+    # 作成カテゴリー取得
+    # VCに入っていなくても作成可能
     # -----------------------------------------------------
-
-    if (
-        not member.voice
-        or not member.voice.channel
-    ):
-
-        await interaction.response.send_message(
-            "🌙 先にVCへ入ってから"
-            "ボタンを押してください。",
-            ephemeral=True,
-        )
-
-        return
-
-    guild = interaction.guild
 
     category_id = (
         SILENT_CATEGORY_ID
@@ -789,17 +815,13 @@ async def create_room(
         discord.CategoryChannel,
     ):
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "❌ 作成カテゴリーが"
             "見つかりません。",
             ephemeral=True,
         )
 
         return
-
-    await interaction.response.defer(
-        ephemeral=True
-    )
 
     default_role = guild.default_role
 
@@ -850,23 +872,54 @@ async def create_room(
         else f"{limit}人"
     )
 
-    voice = await guild.create_voice_channel(
-        name=(
-            f"🌙｜{member.display_name}"
-            f"・{room_type}"
-        ),
-        category=category,
-        user_limit=(
-            limit
-            if not silent
-            else 0
-        ),
-        overwrites=voice_overwrites,
-        reason=(
-            "Melty Moon "
-            "少人数ルーム作成"
-        ),
-    )
+    # -----------------------------------------------------
+    # VC作成
+    # -----------------------------------------------------
+
+    try:
+
+        voice = await guild.create_voice_channel(
+            name=(
+                f"🌙｜{member.display_name}"
+                f"・{room_type}"
+            ),
+            category=category,
+            user_limit=(
+                limit
+                if not silent
+                else 0
+            ),
+            overwrites=voice_overwrites,
+            reason=(
+                "Melty Moon "
+                "少人数ルーム作成"
+            ),
+        )
+
+    except discord.Forbidden:
+
+        await interaction.followup.send(
+            "❌ VCを作成できませんでした。\n"
+            "Botの「チャンネル管理」権限を"
+            "確認してください。",
+            ephemeral=True,
+        )
+
+        return
+
+    except discord.HTTPException as e:
+
+        log.exception(
+            "VC作成エラー：%s",
+            e,
+        )
+
+        await interaction.followup.send(
+            "❌ VC作成中にエラーが発生しました。",
+            ephemeral=True,
+        )
+
+        return
 
     # -----------------------------------------------------
     # 専用TC権限
@@ -887,7 +940,6 @@ async def create_room(
             ),
     }
 
-    # Bot自身
     if guild.me:
 
         text_overwrites[
@@ -923,15 +975,38 @@ async def create_room(
     if not safe_name:
         safe_name = "room"
 
-    text = await guild.create_text_channel(
-        name=f"🌙-{safe_name}-room",
-        category=category,
-        overwrites=text_overwrites,
-        reason=(
-            "Melty Moon "
-            "専用TC作成"
-        ),
-    )
+    try:
+
+        text = await guild.create_text_channel(
+            name=f"🌙-{safe_name}-room",
+            category=category,
+            overwrites=text_overwrites,
+            reason=(
+                "Melty Moon "
+                "専用TC作成"
+            ),
+        )
+
+    except discord.HTTPException as e:
+
+        log.exception(
+            "TC作成エラー：%s",
+            e,
+        )
+
+        try:
+            await voice.delete(
+                reason="TC作成失敗のためVC削除"
+            )
+        except discord.HTTPException:
+            pass
+
+        await interaction.followup.send(
+            "❌ 専用TCの作成に失敗しました。",
+            ephemeral=True,
+        )
+
+        return
 
     # -----------------------------------------------------
     # DB保存
@@ -946,18 +1021,31 @@ async def create_room(
     )
 
     # -----------------------------------------------------
-    # 作成者を新しいVCへ移動
+    # VCに入っている場合だけ自動移動
+    # VC未参加なら部屋だけ作成
     # -----------------------------------------------------
 
-    try:
+    moved = False
 
-        await member.move_to(
-            voice
-        )
+    if (
+        member.voice
+        and member.voice.channel
+    ):
 
-    except discord.HTTPException:
+        try:
 
-        pass
+            await member.move_to(
+                voice
+            )
+
+            moved = True
+
+        except (
+            discord.Forbidden,
+            discord.HTTPException,
+        ):
+
+            moved = False
 
     # -----------------------------------------------------
     # 部屋説明
@@ -998,9 +1086,29 @@ async def create_room(
         view=RoomControlView(),
     )
 
+    # -----------------------------------------------------
+    # 完了通知
+    # -----------------------------------------------------
+
+    if moved:
+
+        message = (
+            f"✅ {voice.mention} を作成し、"
+            "自動で移動しました！"
+        )
+
+    else:
+
+        message = (
+            f"✅ {voice.mention} を作成しました！\n"
+            "VCに入っていなくても"
+            "部屋を作成できます🌙\n\n"
+            "作成したVCをタップして"
+            "入室してください。"
+        )
+
     await interaction.followup.send(
-        f"✅ {voice.mention} を"
-        "作成しました！",
+        message,
         ephemeral=True,
     )
 
@@ -1035,7 +1143,6 @@ async def delete_room(
         room["text_id"]
     )
 
-    # TC削除
     try:
 
         if isinstance(
@@ -1054,7 +1161,6 @@ async def delete_room(
 
         pass
 
-    # VC削除
     try:
 
         await voice.delete(
@@ -1539,10 +1645,6 @@ class RoomControlView(
             LimitSelect()
         )
 
-    # -----------------------------------------------------
-    # 名前変更
-    # -----------------------------------------------------
-
     @discord.ui.button(
         label="名前変更",
         emoji="✏️",
@@ -1558,10 +1660,6 @@ class RoomControlView(
         await interaction.response.send_modal(
             RenameModal()
         )
-
-    # -----------------------------------------------------
-    # ロック
-    # -----------------------------------------------------
 
     @discord.ui.button(
         label="ロック / 解除",
@@ -1647,10 +1745,6 @@ class RoomControlView(
             ephemeral=True,
         )
 
-    # -----------------------------------------------------
-    # 招待
-    # -----------------------------------------------------
-
     @discord.ui.button(
         label="招待",
         emoji="➕",
@@ -1666,10 +1760,6 @@ class RoomControlView(
         await interaction.response.send_modal(
             InviteModal()
         )
-
-    # -----------------------------------------------------
-    # 招待解除
-    # -----------------------------------------------------
 
     @discord.ui.button(
         label="全招待解除",
@@ -1719,7 +1809,6 @@ class RoomControlView(
             room["owner_id"]
         )
 
-        # VC個別権限解除
         if isinstance(
             voice,
             discord.VoiceChannel,
@@ -1758,7 +1847,6 @@ class RoomControlView(
 
                     pass
 
-        # TC個別権限解除
         for target in list(
             interaction.channel.overwrites.keys()
         ):
@@ -1796,10 +1884,6 @@ class RoomControlView(
             "✅ 個別招待を解除しました。",
             ephemeral=True,
         )
-
-    # -----------------------------------------------------
-    # 部屋削除
-    # -----------------------------------------------------
 
     @discord.ui.button(
         label="部屋削除",
@@ -1869,10 +1953,7 @@ async def on_voice_state_update(
     after: discord.VoiceState,
 ):
 
-    # =====================================================
     # 入室
-    # =====================================================
-
     if (
         after.channel
         and after.channel != before.channel
@@ -1884,7 +1965,6 @@ async def on_voice_state_update(
 
         if room:
 
-            # 削除待機をキャンセル
             task = delete_tasks.pop(
                 after.channel.id,
                 None,
@@ -1902,7 +1982,6 @@ async def on_voice_state_update(
                 discord.TextChannel,
             ):
 
-                # 入室した人に専用TCを表示
                 try:
 
                     await text.set_permissions(
@@ -1916,16 +1995,12 @@ async def on_voice_state_update(
 
                     pass
 
-                # プロフィール表示
                 await send_profile(
                     member,
                     text,
                 )
 
-    # =====================================================
     # 退出
-    # =====================================================
-
     if (
         before.channel
         and before.channel != after.channel
@@ -1941,7 +2016,6 @@ async def on_voice_state_update(
                 room["text_id"]
             )
 
-            # 部屋主・管理者以外はTC権限解除
             if (
                 isinstance(
                     text,
@@ -1963,7 +2037,6 @@ async def on_voice_state_update(
 
                     pass
 
-            # 誰もいなくなった
             if len(
                 before.channel.members
             ) == 0:
@@ -2024,6 +2097,8 @@ async def roompanel(
             "👥 **5人部屋**\n"
             "🔇 **無音部屋**\n"
             "　└ VC＋専用チャットルーム\n\n"
+            "✨ **VCに入っていなくても"
+            "ボタンから部屋を作成できます。**\n\n"
             "誰かが入室すると、"
             "その人のプロフィールが"
             "専用TCに表示されます🌙"
@@ -2122,6 +2197,8 @@ async def main():
 
 
 if __name__ == "__main__":
+
+    start_health_server()
 
     asyncio.run(
         main()
