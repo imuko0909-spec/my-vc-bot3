@@ -16,7 +16,7 @@ from discord.ext import commands
 
 
 # =========================================================
-# 🌙 Melty Moon 基本設定
+# 🌙 少人数ROOM Bot 基本設定
 # =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
@@ -25,31 +25,28 @@ TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
 
 # サーバー
-GUILD_ID = 1518584863454658611
+GUILD_ID = 1539443579871821965
 
 # 少人数VC / 無音VC 作成カテゴリー
-ROOM_CATEGORY_ID = 1528925791327485972
-SILENT_CATEGORY_ID = 1528925791327485972
+ROOM_CATEGORY_ID = 1539455562016882728
+SILENT_CATEGORY_ID = 1539455562016882728
 
 # ルーム作成パネル設置先
-PANEL_CHANNEL_ID = 1528926273647284345
+PANEL_CHANNEL_ID = 1540553074693644391
 
 # プロフィール
-MALE_PROFILE_CHANNEL_ID = 1528914705517645935
-FEMALE_PROFILE_CHANNEL_ID = 1528914803689783417
+MALE_PROFILE_CHANNEL_ID = 1539453475891454063
+FEMALE_PROFILE_CHANNEL_ID = 1539453537174683759
 
 # 管理
-ADMIN_LOG_CHANNEL_ID = 1524030913023967232
-ADMIN_ROLE_ID = 1518585500783480985
-
-# 新規参加時に自動付与
-TRIAL_MEMBER_ROLE_ID = 1528942901521023069
+ADMIN_LOG_CHANNEL_ID = 1539460178485977180
+ADMIN_ROLE_ID = 1539445438346698783
 
 # 空室になってから削除まで
 EMPTY_DELETE_SECONDS = 15
 
 # DB
-DB_PATH = "data/melty_rooms.db"
+DB_PATH = "data/small_rooms.db"
 
 
 # =========================================================
@@ -61,7 +58,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
-log = logging.getLogger("melty-moon")
+log = logging.getLogger("small-room-bot")
 
 
 # =========================================================
@@ -78,7 +75,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         )
         self.end_headers()
         self.wfile.write(
-            "Melty Moon Bot is running!".encode("utf-8")
+            "Small Room Bot is running!".encode("utf-8")
         )
 
     def log_message(self, format, *args):
@@ -416,98 +413,6 @@ async def send_log(
 
 
 # =========================================================
-# 新規参加
-# お試しメンバー自動付与
-# =========================================================
-
-@bot.event
-async def on_member_join(
-    member: discord.Member,
-):
-
-    if member.guild.id != GUILD_ID:
-        return
-
-    if member.bot:
-        return
-
-    role = member.guild.get_role(
-        TRIAL_MEMBER_ROLE_ID
-    )
-
-    if role is None:
-
-        log.error(
-            "お試しメンバーロールが見つかりません。ID=%s",
-            TRIAL_MEMBER_ROLE_ID,
-        )
-
-        await send_log(
-            member.guild,
-            (
-                "❌ **お試しメンバー自動付与エラー**\n"
-                f"対象：{member.mention}\n"
-                f"ユーザーID：`{member.id}`\n"
-                f"ロールID：`{TRIAL_MEMBER_ROLE_ID}`\n\n"
-                "指定されたロールが見つかりません。"
-            ),
-        )
-
-        return
-
-    try:
-
-        await member.add_roles(
-            role,
-            reason=(
-                "Melty Moon："
-                "新規参加時お試しメンバー自動付与"
-            ),
-        )
-
-        log.info(
-            "お試しメンバー付与成功：%s (%s)",
-            member,
-            member.id,
-        )
-
-        await send_log(
-            member.guild,
-            (
-                "🌙 **お試しメンバー自動付与**\n"
-                f"対象：{member.mention}\n"
-                f"ユーザー：`{member}`\n"
-                f"ID：`{member.id}`\n"
-                f"付与ロール：{role.mention}"
-            ),
-        )
-
-    except discord.Forbidden:
-
-        log.error(
-            "お試しメンバーロールを付与できません。"
-        )
-
-        await send_log(
-            member.guild,
-            (
-                "❌ **お試しメンバー付与失敗**\n"
-                f"対象：{member.mention}\n\n"
-                "Botのロールが"
-                "「お試しメンバー」より上にあるか、"
-                "ロール管理権限を確認してください。"
-            ),
-        )
-
-    except discord.HTTPException as e:
-
-        log.exception(
-            "お試しメンバーロール付与エラー：%s",
-            e,
-        )
-
-
-# =========================================================
 # プロフィール検索
 # =========================================================
 
@@ -648,15 +553,11 @@ async def send_profile(
             text = (
                 text[:3800]
                 + "\n\n"
-                + "…続きは元プロフィールから"
-                + "確認してください。"
+                + "…続きは元プロフィールから確認してください。"
             )
 
         embed = discord.Embed(
-            title=(
-                f"🌙 {member.display_name} さんが"
-                "入室しました"
-            ),
+            title=f"🌙 {member.display_name} さんが入室しました",
             description=text,
             color=discord.Color.from_rgb(
                 210,
@@ -670,7 +571,7 @@ async def send_profile(
         )
 
         embed.set_footer(
-            text="𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 🌙"
+            text="少人数ROOM 🌙"
         )
 
         await text_channel.send(
@@ -683,15 +584,10 @@ async def send_profile(
     else:
 
         embed = discord.Embed(
-            title=(
-                f"🌙 {member.display_name} さんが"
-                "入室しました"
-            ),
+            title=f"🌙 {member.display_name} さんが入室しました",
             description=(
-                "プロフィール投稿が"
-                "見つかりませんでした。\n\n"
-                "男性プロフィール / "
-                "女性プロフィールから"
+                "プロフィール投稿が見つかりませんでした。\n\n"
+                "男性プロフィール / 女性プロフィールから"
                 "プロフィールをご確認ください。"
             ),
             color=discord.Color.from_rgb(
@@ -777,10 +673,6 @@ async def create_room(
 
     guild = interaction.guild
 
-    # -----------------------------------------------------
-    # 既に自分の部屋があるか
-    # -----------------------------------------------------
-
     existing = await get_owned_room(
         member
     )
@@ -788,17 +680,11 @@ async def create_room(
     if existing:
 
         await interaction.followup.send(
-            "⚠️ すでにあなたが作成した"
-            "ルームがあります。",
+            "⚠️ すでにあなたが作成したルームがあります。",
             ephemeral=True,
         )
 
         return
-
-    # -----------------------------------------------------
-    # 作成カテゴリー取得
-    # VCに入っていなくても作成可能
-    # -----------------------------------------------------
 
     category_id = (
         SILENT_CATEGORY_ID
@@ -816,8 +702,7 @@ async def create_room(
     ):
 
         await interaction.followup.send(
-            "❌ 作成カテゴリーが"
-            "見つかりません。",
+            "❌ 作成カテゴリーが見つかりません。",
             ephemeral=True,
         )
 
@@ -825,28 +710,20 @@ async def create_room(
 
     default_role = guild.default_role
 
-    # -----------------------------------------------------
-    # VC権限
-    # -----------------------------------------------------
-
     voice_overwrites = {
 
         default_role:
             discord.PermissionOverwrite(
                 view_channel=True,
                 connect=True,
-                speak=False
-                if silent
-                else None,
+                speak=False if silent else None,
             ),
 
         member:
             discord.PermissionOverwrite(
                 view_channel=True,
                 connect=True,
-                speak=False
-                if silent
-                else True,
+                speak=False if silent else True,
                 manage_channels=True,
             ),
     }
@@ -872,17 +749,10 @@ async def create_room(
         else f"{limit}人"
     )
 
-    # -----------------------------------------------------
-    # VC作成
-    # -----------------------------------------------------
-
     try:
 
         voice = await guild.create_voice_channel(
-            name=(
-                f"🌙｜{member.display_name}"
-                f"・{room_type}"
-            ),
+            name=f"🌙｜{member.display_name}・{room_type}",
             category=category,
             user_limit=(
                 limit
@@ -890,18 +760,14 @@ async def create_room(
                 else 0
             ),
             overwrites=voice_overwrites,
-            reason=(
-                "Melty Moon "
-                "少人数ルーム作成"
-            ),
+            reason="少人数ルーム作成",
         )
 
     except discord.Forbidden:
 
         await interaction.followup.send(
             "❌ VCを作成できませんでした。\n"
-            "Botの「チャンネル管理」権限を"
-            "確認してください。",
+            "Botの「チャンネル管理」権限を確認してください。",
             ephemeral=True,
         )
 
@@ -920,10 +786,6 @@ async def create_room(
         )
 
         return
-
-    # -----------------------------------------------------
-    # 専用TC権限
-    # -----------------------------------------------------
 
     text_overwrites = {
 
@@ -962,10 +824,6 @@ async def create_room(
             manage_channels=True,
         )
 
-    # -----------------------------------------------------
-    # 専用TC作成
-    # -----------------------------------------------------
-
     safe_name = re.sub(
         r"[^a-zA-Z0-9ぁ-んァ-ヶ一-龠_-]",
         "",
@@ -981,10 +839,7 @@ async def create_room(
             name=f"🌙-{safe_name}-room",
             category=category,
             overwrites=text_overwrites,
-            reason=(
-                "Melty Moon "
-                "専用TC作成"
-            ),
+            reason="専用TC作成",
         )
 
     except discord.HTTPException as e:
@@ -1008,10 +863,6 @@ async def create_room(
 
         return
 
-    # -----------------------------------------------------
-    # DB保存
-    # -----------------------------------------------------
-
     save_room(
         voice.id,
         text.id,
@@ -1019,11 +870,6 @@ async def create_room(
         limit,
         silent,
     )
-
-    # -----------------------------------------------------
-    # VCに入っている場合だけ自動移動
-    # VC未参加なら部屋だけ作成
-    # -----------------------------------------------------
 
     moved = False
 
@@ -1047,19 +893,12 @@ async def create_room(
 
             moved = False
 
-    # -----------------------------------------------------
-    # 部屋説明
-    # -----------------------------------------------------
-
     embed = discord.Embed(
-        title=(
-            "🌙 𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 Room"
-        ),
+        title="🌙 少人数ROOM",
         description=(
             f"部屋主：{member.mention}\n"
             f"種類：**{room_type}ルーム**\n\n"
-            "下のボタンから"
-            "お部屋を操作できます✨"
+            "下のボタンからお部屋を操作できます✨"
         ),
         color=discord.Color.from_rgb(
             210,
@@ -1073,10 +912,8 @@ async def create_room(
         embed.add_field(
             name="🔇 無音ルーム",
             value=(
-                "このVCでは音声での"
-                "会話はできません。\n"
-                "この専用TCで"
-                "チャットをお楽しみください。"
+                "このVCでは音声での会話はできません。\n"
+                "この専用TCでチャットをお楽しみください。"
             ),
             inline=False,
         )
@@ -1085,10 +922,6 @@ async def create_room(
         embed=embed,
         view=RoomControlView(),
     )
-
-    # -----------------------------------------------------
-    # 完了通知
-    # -----------------------------------------------------
 
     if moved:
 
@@ -1101,10 +934,8 @@ async def create_room(
 
         message = (
             f"✅ {voice.mention} を作成しました！\n"
-            "VCに入っていなくても"
-            "部屋を作成できます🌙\n\n"
-            "作成したVCをタップして"
-            "入室してください。"
+            "VCに入っていなくても部屋を作成できます🌙\n\n"
+            "作成したVCをタップして入室してください。"
         )
 
     await interaction.followup.send(
@@ -1151,27 +982,19 @@ async def delete_room(
         ):
 
             await text.delete(
-                reason=(
-                    "Melty Moon "
-                    "ルーム自動削除"
-                )
+                reason="ルーム自動削除"
             )
 
     except discord.HTTPException:
-
         pass
 
     try:
 
         await voice.delete(
-            reason=(
-                "Melty Moon "
-                "ルーム自動削除"
-            )
+            reason="ルーム自動削除"
         )
 
     except discord.HTTPException:
-
         pass
 
     delete_room_record(
@@ -1220,7 +1043,6 @@ async def schedule_delete(
                 )
 
         except asyncio.CancelledError:
-
             return
 
         finally:
@@ -1255,7 +1077,7 @@ class RoomCreateView(
         label="3人部屋",
         emoji="👥",
         style=discord.ButtonStyle.primary,
-        custom_id="melty:create:3",
+        custom_id="room:create:3",
     )
     async def room3(
         self,
@@ -1273,7 +1095,7 @@ class RoomCreateView(
         label="4人部屋",
         emoji="👥",
         style=discord.ButtonStyle.primary,
-        custom_id="melty:create:4",
+        custom_id="room:create:4",
     )
     async def room4(
         self,
@@ -1291,7 +1113,7 @@ class RoomCreateView(
         label="5人部屋",
         emoji="👥",
         style=discord.ButtonStyle.primary,
-        custom_id="melty:create:5",
+        custom_id="room:create:5",
     )
     async def room5(
         self,
@@ -1309,7 +1131,7 @@ class RoomCreateView(
         label="無音部屋",
         emoji="🔇",
         style=discord.ButtonStyle.secondary,
-        custom_id="melty:create:silent",
+        custom_id="room:create:silent",
     )
     async def silent_room(
         self,
@@ -1357,8 +1179,7 @@ class RenameModal(
         if not room:
 
             await interaction.response.send_message(
-                "❌ 部屋情報が"
-                "見つかりません。",
+                "❌ 部屋情報が見つかりません。",
                 ephemeral=True,
             )
 
@@ -1370,8 +1191,7 @@ class RenameModal(
         ):
 
             await interaction.response.send_message(
-                "❌ 部屋主のみ"
-                "変更できます。",
+                "❌ 部屋主のみ変更できます。",
                 ephemeral=True,
             )
 
@@ -1387,10 +1207,7 @@ class RenameModal(
         ):
 
             await voice.edit(
-                name=(
-                    f"🌙｜"
-                    f"{self.room_name.value}"
-                )
+                name=f"🌙｜{self.room_name.value}"
             )
 
         await interaction.response.send_message(
@@ -1438,8 +1255,7 @@ class InviteModal(
         ):
 
             await interaction.response.send_message(
-                "❌ 部屋主のみ"
-                "操作できます。",
+                "❌ 部屋主のみ操作できます。",
                 ephemeral=True,
             )
 
@@ -1453,9 +1269,7 @@ class InviteModal(
         if not ids:
 
             await interaction.response.send_message(
-                "❌ 正しいユーザーID"
-                "またはメンションを"
-                "入力してください。",
+                "❌ 正しいユーザーIDまたはメンションを入力してください。",
                 ephemeral=True,
             )
 
@@ -1472,8 +1286,7 @@ class InviteModal(
         if not member:
 
             await interaction.response.send_message(
-                "❌ メンバーが"
-                "見つかりません。",
+                "❌ メンバーが見つかりません。",
                 ephemeral=True,
             )
 
@@ -1507,8 +1320,7 @@ class InviteModal(
         )
 
         await interaction.response.send_message(
-            f"✅ {member.mention} を"
-            "招待しました。",
+            f"✅ {member.mention} を招待しました。",
             ephemeral=True,
         )
 
@@ -1554,7 +1366,7 @@ class LimitSelect(
         super().__init__(
             placeholder="人数制限を変更",
             options=options,
-            custom_id="melty:room:limit",
+            custom_id="room:limit",
         )
 
     async def callback(
@@ -1581,8 +1393,7 @@ class LimitSelect(
         ):
 
             await interaction.response.send_message(
-                "❌ 部屋主のみ"
-                "操作できます。",
+                "❌ 部屋主のみ操作できます。",
                 ephemeral=True,
             )
 
@@ -1591,8 +1402,7 @@ class LimitSelect(
         if room["silent"]:
 
             await interaction.response.send_message(
-                "🔇 無音部屋では"
-                "人数変更を使用しません。",
+                "🔇 無音部屋では人数変更を使用しません。",
                 ephemeral=True,
             )
 
@@ -1621,8 +1431,7 @@ class LimitSelect(
             )
 
         await interaction.response.send_message(
-            f"✅ 人数制限を"
-            f" **{limit}人** に変更しました。",
+            f"✅ 人数制限を **{limit}人** に変更しました。",
             ephemeral=True,
         )
 
@@ -1649,7 +1458,7 @@ class RoomControlView(
         label="名前変更",
         emoji="✏️",
         style=discord.ButtonStyle.secondary,
-        custom_id="melty:room:rename",
+        custom_id="room:rename",
     )
     async def rename(
         self,
@@ -1665,7 +1474,7 @@ class RoomControlView(
         label="ロック / 解除",
         emoji="🔐",
         style=discord.ButtonStyle.primary,
-        custom_id="melty:room:lock",
+        custom_id="room:lock",
     )
     async def lock(
         self,
@@ -1692,8 +1501,7 @@ class RoomControlView(
         ):
 
             await interaction.response.send_message(
-                "❌ 部屋主のみ"
-                "操作できます。",
+                "❌ 部屋主のみ操作できます。",
                 ephemeral=True,
             )
 
@@ -1749,7 +1557,7 @@ class RoomControlView(
         label="招待",
         emoji="➕",
         style=discord.ButtonStyle.success,
-        custom_id="melty:room:invite",
+        custom_id="room:invite",
     )
     async def invite(
         self,
@@ -1765,7 +1573,7 @@ class RoomControlView(
         label="全招待解除",
         emoji="➖",
         style=discord.ButtonStyle.secondary,
-        custom_id="melty:room:clear_invites",
+        custom_id="room:clear_invites",
     )
     async def clear_invites(
         self,
@@ -1792,8 +1600,7 @@ class RoomControlView(
         ):
 
             await interaction.response.send_message(
-                "❌ 部屋主のみ"
-                "操作できます。",
+                "❌ 部屋主のみ操作できます。",
                 ephemeral=True,
             )
 
@@ -1844,7 +1651,6 @@ class RoomControlView(
                     )
 
                 except discord.HTTPException:
-
                     pass
 
         for target in list(
@@ -1877,7 +1683,6 @@ class RoomControlView(
                 )
 
             except discord.HTTPException:
-
                 pass
 
         await interaction.response.send_message(
@@ -1889,7 +1694,7 @@ class RoomControlView(
         label="部屋削除",
         emoji="🗑️",
         style=discord.ButtonStyle.danger,
-        custom_id="melty:room:delete",
+        custom_id="room:delete",
     )
     async def delete_button(
         self,
@@ -1916,8 +1721,7 @@ class RoomControlView(
         ):
 
             await interaction.response.send_message(
-                "❌ 部屋主のみ"
-                "削除できます。",
+                "❌ 部屋主のみ削除できます。",
                 ephemeral=True,
             )
 
@@ -1992,7 +1796,6 @@ async def on_voice_state_update(
                     )
 
                 except discord.HTTPException:
-
                     pass
 
                 await send_profile(
@@ -2021,8 +1824,7 @@ async def on_voice_state_update(
                     text,
                     discord.TextChannel,
                 )
-                and member.id
-                != room["owner_id"]
+                and member.id != room["owner_id"]
                 and not is_admin(member)
             ):
 
@@ -2034,7 +1836,6 @@ async def on_voice_state_update(
                     )
 
                 except discord.HTTPException:
-
                     pass
 
             if len(
@@ -2052,10 +1853,7 @@ async def on_voice_state_update(
 
 @bot.tree.command(
     name="roompanel",
-    description=(
-        "Melty Moon "
-        "少人数ルームパネルを設置します"
-    ),
+    description="少人数ルームパネルを設置します",
     guild=discord.Object(
         id=GUILD_ID
     ),
@@ -2077,21 +1875,16 @@ async def roompanel(
     ):
 
         await interaction.response.send_message(
-            "❌ パネル設置チャンネルが"
-            "見つかりません。",
+            "❌ パネル設置チャンネルが見つかりません。",
             ephemeral=True,
         )
 
         return
 
     embed = discord.Embed(
-        title=(
-            "🌙 𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 "
-            "少人数ROOM"
-        ),
+        title="🌙 少人数ROOM",
         description=(
-            "作りたいお部屋を"
-            "選んでください✨\n\n"
+            "作りたいお部屋を選んでください✨\n\n"
             "👥 **3人部屋**\n"
             "👥 **4人部屋**\n"
             "👥 **5人部屋**\n"
@@ -2111,7 +1904,7 @@ async def roompanel(
     )
 
     embed.set_footer(
-        text="𝐦𝐞𝐥𝐭𝐲 𝐌𝐨𝐨𝐧 🌙"
+        text="少人数ROOM 🌙"
     )
 
     await channel.send(
@@ -2120,8 +1913,7 @@ async def roompanel(
     )
 
     await interaction.response.send_message(
-        "✅ 少人数ROOMパネルを"
-        "設置しました。",
+        "✅ 少人数ROOMパネルを設置しました。",
         ephemeral=True,
     )
 
@@ -2183,8 +1975,7 @@ async def main():
     if not TOKEN:
 
         raise RuntimeError(
-            "DISCORD_TOKEN が"
-            "設定されていません。"
+            "DISCORD_TOKEN が設定されていません。"
         )
 
     await setup_views()
