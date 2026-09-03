@@ -424,13 +424,9 @@ async def send_log(
         return
 
     try:
-
-        await channel.send(
-            text
-        )
+        await channel.send(text)
 
     except discord.HTTPException:
-
         pass
 
 
@@ -473,7 +469,6 @@ async def find_profile_message(
                 discord.Forbidden,
                 discord.HTTPException,
             ):
-
                 pass
 
         clear_profile_cache(
@@ -522,7 +517,6 @@ async def find_profile_message(
             )
 
         except discord.HTTPException:
-
             pass
 
     return None
@@ -879,7 +873,6 @@ async def create_room(
             )
 
         except discord.HTTPException:
-
             pass
 
         await interaction.followup.send(
@@ -916,7 +909,6 @@ async def create_room(
             discord.Forbidden,
             discord.HTTPException,
         ):
-
             moved = False
 
     embed = discord.Embed(
@@ -1012,7 +1004,6 @@ async def delete_room(
             )
 
     except discord.HTTPException:
-
         pass
 
     try:
@@ -1022,7 +1013,6 @@ async def delete_room(
         )
 
     except discord.HTTPException:
-
         pass
 
     delete_room_record(
@@ -1071,7 +1061,6 @@ async def schedule_delete(
                 )
 
         except asyncio.CancelledError:
-
             return
 
         finally:
@@ -1689,7 +1678,6 @@ class RoomControlView(
                     )
 
                 except discord.HTTPException:
-
                     pass
 
         for target in list(
@@ -1716,7 +1704,6 @@ class RoomControlView(
                 )
 
             except discord.HTTPException:
-
                 pass
 
         await interaction.response.send_message(
@@ -1815,7 +1802,6 @@ async def on_voice_state_update(
             )
 
             if task:
-
                 task.cancel()
 
             text = member.guild.get_channel(
@@ -1837,7 +1823,6 @@ async def on_voice_state_update(
                     )
 
                 except discord.HTTPException:
-
                     pass
 
                 await send_profile(
@@ -1878,7 +1863,6 @@ async def on_voice_state_update(
                     )
 
                 except discord.HTTPException:
-
                     pass
 
             if len(
@@ -1909,7 +1893,6 @@ async def roompanel(
 ):
 
     if not interaction.guild:
-
         return
 
     channel = interaction.guild.get_channel(
@@ -1966,24 +1949,6 @@ async def roompanel(
 
 
 # =========================================================
-# 起動時処理
-# =========================================================
-
-@bot.event
-async def on_ready():
-
-    log.info(
-        "ログイン完了：%s",
-        bot.user,
-    )
-
-    log.info(
-        "Candy サーバーID：%s",
-        GUILD_ID,
-    )
-
-
-# =========================================================
 # Persistent View
 # =========================================================
 
@@ -1996,6 +1961,84 @@ async def setup_views():
     bot.add_view(
         RoomControlView()
     )
+
+
+# =========================================================
+# 起動時処理
+# =========================================================
+
+_synced = False
+
+
+@bot.event
+async def on_ready():
+
+    global _synced
+
+    log.info(
+        "ログイン完了：%s",
+        bot.user,
+    )
+
+    log.info(
+        "Candy サーバーID：%s",
+        GUILD_ID,
+    )
+
+    # 再接続のたびに同期しないようにする
+    if _synced:
+        return
+
+    guild = bot.get_guild(
+        GUILD_ID
+    )
+
+    if guild is None:
+
+        log.error(
+            "❌ Candyサーバーが見つかりません。"
+            "Botがサーバーに参加しているか確認してください。"
+        )
+
+        return
+
+    guild_obj = discord.Object(
+        id=GUILD_ID
+    )
+
+    try:
+
+        synced = await bot.tree.sync(
+            guild=guild_obj
+        )
+
+        _synced = True
+
+        log.info(
+            "✅ Candy スラッシュコマンド同期完了：%s個",
+            len(synced),
+        )
+
+    except discord.Forbidden:
+
+        log.exception(
+            "❌ スラッシュコマンド同期に失敗しました。"
+            "Bot招待時に applications.commands が"
+            "含まれているか確認してください。"
+        )
+
+    except discord.HTTPException:
+
+        log.exception(
+            "❌ Discord APIエラーで"
+            "スラッシュコマンド同期に失敗しました。"
+        )
+
+    except Exception:
+
+        log.exception(
+            "❌ スラッシュコマンド同期エラー"
+        )
 
 
 # =========================================================
@@ -2012,27 +2055,7 @@ async def main():
 
     await setup_views()
 
-    guild_obj = discord.Object(
-        id=GUILD_ID
-    )
-
     async with bot:
-
-        try:
-
-            await bot.tree.sync(
-                guild=guild_obj
-            )
-
-            log.info(
-                "Candy スラッシュコマンド同期完了"
-            )
-
-        except Exception:
-
-            log.exception(
-                "スラッシュコマンド同期エラー"
-            )
 
         await bot.start(
             TOKEN
