@@ -16,7 +16,7 @@ from discord.ext import commands
 
 
 # =========================================================
-# 🌙 少人数ROOM Bot 基本設定
+# 🍬 Candy 少人数ROOM Bot 基本設定
 # =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
@@ -24,29 +24,29 @@ TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 # Render Web Service 用
 PORT = int(os.getenv("PORT", "10000"))
 
-# サーバー
-GUILD_ID = 1539443579871821965
+# 🍬 Candy サーバー
+GUILD_ID = 1542420058775494666
 
 # 少人数VC / 無音VC 作成カテゴリー
-ROOM_CATEGORY_ID = 1539455562016882728
-SILENT_CATEGORY_ID = 1539455562016882728
+ROOM_CATEGORY_ID = 1542435536822861884
+SILENT_CATEGORY_ID = 1542435536822861884
 
 # ルーム作成パネル設置先
-PANEL_CHANNEL_ID = 1540553074693644391
+PANEL_CHANNEL_ID = 1544864425394307223
 
 # プロフィール
-MALE_PROFILE_CHANNEL_ID = 1539453475891454063
-FEMALE_PROFILE_CHANNEL_ID = 1539453537174683759
+MALE_PROFILE_CHANNEL_ID = 1542429626905657415
+FEMALE_PROFILE_CHANNEL_ID = 1542429755750486026
 
 # 管理
-ADMIN_LOG_CHANNEL_ID = 1539460178485977180
-ADMIN_ROLE_ID = 1539445438346698783
+ADMIN_LOG_CHANNEL_ID = 1542720008499765248
+ADMIN_ROLE_ID = 1542422448895565824
 
 # 空室になってから削除まで
 EMPTY_DELETE_SECONDS = 15
 
 # DB
-DB_PATH = "data/small_rooms.db"
+DB_PATH = "data/candy_small_rooms.db"
 
 
 # =========================================================
@@ -58,7 +58,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
-log = logging.getLogger("small-room-bot")
+log = logging.getLogger("candy-small-room-bot")
 
 
 # =========================================================
@@ -75,7 +75,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         )
         self.end_headers()
         self.wfile.write(
-            "Small Room Bot is running!".encode("utf-8")
+            "Candy Small Room Bot is running!".encode("utf-8")
         )
 
     def log_message(self, format, *args):
@@ -106,12 +106,20 @@ def start_health_server():
 # SQLite
 # =========================================================
 
-Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+Path(DB_PATH).parent.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 
 def db_connect():
-    conn = sqlite3.connect(DB_PATH)
+
+    conn = sqlite3.connect(
+        DB_PATH
+    )
+
     conn.row_factory = sqlite3.Row
+
     return conn
 
 
@@ -210,7 +218,9 @@ def save_room(
         conn.commit()
 
 
-def get_room(voice_id: int):
+def get_room(
+    voice_id: int,
+):
 
     with db_connect() as conn:
 
@@ -224,7 +234,9 @@ def get_room(voice_id: int):
         ).fetchone()
 
 
-def get_room_by_text(text_id: int):
+def get_room_by_text(
+    text_id: int,
+):
 
     with db_connect() as conn:
 
@@ -238,7 +250,9 @@ def get_room_by_text(text_id: int):
         ).fetchone()
 
 
-def delete_room_record(voice_id: int):
+def delete_room_record(
+    voice_id: int,
+):
 
     with db_connect() as conn:
 
@@ -329,7 +343,9 @@ def cache_profile(
         conn.commit()
 
 
-def get_cached_profile(user_id: int):
+def get_cached_profile(
+    user_id: int,
+):
 
     with db_connect() as conn:
 
@@ -343,7 +359,9 @@ def get_cached_profile(user_id: int):
         ).fetchone()
 
 
-def clear_profile_cache(user_id: int):
+def clear_profile_cache(
+    user_id: int,
+):
 
     with db_connect() as conn:
 
@@ -362,7 +380,9 @@ def clear_profile_cache(user_id: int):
 # 管理者判定
 # =========================================================
 
-def is_admin(member: discord.Member) -> bool:
+def is_admin(
+    member: discord.Member,
+) -> bool:
 
     if member.guild_permissions.administrator:
         return True
@@ -405,7 +425,9 @@ async def send_log(
 
     try:
 
-        await channel.send(text)
+        await channel.send(
+            text
+        )
 
     except discord.HTTPException:
 
@@ -512,7 +534,10 @@ async def find_profile_message(
 
 class ProfileLinkView(discord.ui.View):
 
-    def __init__(self, url: str):
+    def __init__(
+        self,
+        url: str,
+    ):
 
         super().__init__(
             timeout=120
@@ -557,12 +582,12 @@ async def send_profile(
             )
 
         embed = discord.Embed(
-            title=f"🌙 {member.display_name} さんが入室しました",
+            title=f"🍬 {member.display_name} さんが入室しました",
             description=text,
             color=discord.Color.from_rgb(
-                210,
-                150,
                 255,
+                170,
+                220,
             ),
         )
 
@@ -571,7 +596,7 @@ async def send_profile(
         )
 
         embed.set_footer(
-            text="少人数ROOM 🌙"
+            text="Candy 少人数ROOM 🍬"
         )
 
         await text_channel.send(
@@ -584,16 +609,16 @@ async def send_profile(
     else:
 
         embed = discord.Embed(
-            title=f"🌙 {member.display_name} さんが入室しました",
+            title=f"🍬 {member.display_name} さんが入室しました",
             description=(
                 "プロフィール投稿が見つかりませんでした。\n\n"
                 "男性プロフィール / 女性プロフィールから"
                 "プロフィールをご確認ください。"
             ),
             color=discord.Color.from_rgb(
-                210,
-                150,
                 255,
+                170,
+                220,
             ),
         )
 
@@ -711,7 +736,6 @@ async def create_room(
     default_role = guild.default_role
 
     voice_overwrites = {
-
         default_role:
             discord.PermissionOverwrite(
                 view_channel=True,
@@ -752,7 +776,7 @@ async def create_room(
     try:
 
         voice = await guild.create_voice_channel(
-            name=f"🌙｜{member.display_name}・{room_type}",
+            name=f"🍬｜{member.display_name}・{room_type}",
             category=category,
             user_limit=(
                 limit
@@ -760,7 +784,7 @@ async def create_room(
                 else 0
             ),
             overwrites=voice_overwrites,
-            reason="少人数ルーム作成",
+            reason="Candy 少人数ルーム作成",
         )
 
     except discord.Forbidden:
@@ -788,7 +812,6 @@ async def create_room(
         return
 
     text_overwrites = {
-
         default_role:
             discord.PermissionOverwrite(
                 view_channel=False,
@@ -836,10 +859,10 @@ async def create_room(
     try:
 
         text = await guild.create_text_channel(
-            name=f"🌙-{safe_name}-room",
+            name=f"🍬-{safe_name}-room",
             category=category,
             overwrites=text_overwrites,
-            reason="専用TC作成",
+            reason="Candy 専用TC作成",
         )
 
     except discord.HTTPException as e:
@@ -850,10 +873,13 @@ async def create_room(
         )
 
         try:
+
             await voice.delete(
                 reason="TC作成失敗のためVC削除"
             )
+
         except discord.HTTPException:
+
             pass
 
         await interaction.followup.send(
@@ -894,16 +920,16 @@ async def create_room(
             moved = False
 
     embed = discord.Embed(
-        title="🌙 少人数ROOM",
+        title="🍬 Candy 少人数ROOM",
         description=(
             f"部屋主：{member.mention}\n"
             f"種類：**{room_type}ルーム**\n\n"
             "下のボタンからお部屋を操作できます✨"
         ),
         color=discord.Color.from_rgb(
-            210,
-            150,
             255,
+            170,
+            220,
         ),
     )
 
@@ -934,7 +960,7 @@ async def create_room(
 
         message = (
             f"✅ {voice.mention} を作成しました！\n"
-            "VCに入っていなくても部屋を作成できます🌙\n\n"
+            "VCに入っていなくても部屋を作成できます🍬\n\n"
             "作成したVCをタップして入室してください。"
         )
 
@@ -946,7 +972,7 @@ async def create_room(
     await send_log(
         guild,
         (
-            "🌙 **ルーム作成**\n"
+            "🍬 **ルーム作成**\n"
             f"作成者：{member.mention}\n"
             f"ID：`{member.id}`\n"
             f"VC：{voice.name}\n"
@@ -982,19 +1008,21 @@ async def delete_room(
         ):
 
             await text.delete(
-                reason="ルーム自動削除"
+                reason="Candy ルーム自動削除"
             )
 
     except discord.HTTPException:
+
         pass
 
     try:
 
         await voice.delete(
-            reason="ルーム自動削除"
+            reason="Candy ルーム自動削除"
         )
 
     except discord.HTTPException:
+
         pass
 
     delete_room_record(
@@ -1043,6 +1071,7 @@ async def schedule_delete(
                 )
 
         except asyncio.CancelledError:
+
             return
 
         finally:
@@ -1060,7 +1089,7 @@ async def schedule_delete(
 
 
 # =========================================================
-# 🌙 ルーム作成パネル
+# 🍬 ルーム作成パネル
 # =========================================================
 
 class RoomCreateView(
@@ -1077,7 +1106,7 @@ class RoomCreateView(
         label="3人部屋",
         emoji="👥",
         style=discord.ButtonStyle.primary,
-        custom_id="room:create:3",
+        custom_id="candy:room:create:3",
     )
     async def room3(
         self,
@@ -1095,7 +1124,7 @@ class RoomCreateView(
         label="4人部屋",
         emoji="👥",
         style=discord.ButtonStyle.primary,
-        custom_id="room:create:4",
+        custom_id="candy:room:create:4",
     )
     async def room4(
         self,
@@ -1113,7 +1142,7 @@ class RoomCreateView(
         label="5人部屋",
         emoji="👥",
         style=discord.ButtonStyle.primary,
-        custom_id="room:create:5",
+        custom_id="candy:room:create:5",
     )
     async def room5(
         self,
@@ -1131,7 +1160,7 @@ class RoomCreateView(
         label="無音部屋",
         emoji="🔇",
         style=discord.ButtonStyle.secondary,
-        custom_id="room:create:silent",
+        custom_id="candy:room:create:silent",
     )
     async def silent_room(
         self,
@@ -1152,7 +1181,7 @@ class RoomCreateView(
 
 class RenameModal(
     discord.ui.Modal,
-    title="🌙 部屋名変更",
+    title="🍬 部屋名変更",
 ):
 
     room_name = discord.ui.TextInput(
@@ -1207,7 +1236,7 @@ class RenameModal(
         ):
 
             await voice.edit(
-                name=f"🌙｜{self.room_name.value}"
+                name=f"🍬｜{self.room_name.value}"
             )
 
         await interaction.response.send_message(
@@ -1222,7 +1251,7 @@ class RenameModal(
 
 class InviteModal(
     discord.ui.Modal,
-    title="🌙 メンバー招待",
+    title="🍬 メンバー招待",
 ):
 
     target = discord.ui.TextInput(
@@ -1247,6 +1276,12 @@ class InviteModal(
         )
 
         if not room:
+
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+
             return
 
         if not owner_or_admin(
@@ -1307,9 +1342,7 @@ class InviteModal(
                 member,
                 view_channel=True,
                 connect=True,
-                speak=False
-                if room["silent"]
-                else True,
+                speak=False if room["silent"] else True,
             )
 
         await text.set_permissions(
@@ -1336,27 +1369,22 @@ class LimitSelect(
     def __init__(self):
 
         options = [
-
             discord.SelectOption(
                 label="2人",
                 value="2",
             ),
-
             discord.SelectOption(
                 label="3人",
                 value="3",
             ),
-
             discord.SelectOption(
                 label="4人",
                 value="4",
             ),
-
             discord.SelectOption(
                 label="5人",
                 value="5",
             ),
-
             discord.SelectOption(
                 label="6人",
                 value="6",
@@ -1366,7 +1394,7 @@ class LimitSelect(
         super().__init__(
             placeholder="人数制限を変更",
             options=options,
-            custom_id="room:limit",
+            custom_id="candy:room:limit",
         )
 
     async def callback(
@@ -1385,6 +1413,12 @@ class LimitSelect(
         )
 
         if not room:
+
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+
             return
 
         if not owner_or_admin(
@@ -1458,7 +1492,7 @@ class RoomControlView(
         label="名前変更",
         emoji="✏️",
         style=discord.ButtonStyle.secondary,
-        custom_id="room:rename",
+        custom_id="candy:room:rename",
     )
     async def rename(
         self,
@@ -1474,7 +1508,7 @@ class RoomControlView(
         label="ロック / 解除",
         emoji="🔐",
         style=discord.ButtonStyle.primary,
-        custom_id="room:lock",
+        custom_id="candy:room:lock",
     )
     async def lock(
         self,
@@ -1493,6 +1527,12 @@ class RoomControlView(
         )
 
         if not room:
+
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+
             return
 
         if not owner_or_admin(
@@ -1515,6 +1555,12 @@ class RoomControlView(
             voice,
             discord.VoiceChannel,
         ):
+
+            await interaction.response.send_message(
+                "❌ VCが見つかりません。",
+                ephemeral=True,
+            )
+
             return
 
         locked = bool(
@@ -1526,16 +1572,8 @@ class RoomControlView(
         await voice.set_permissions(
             interaction.guild.default_role,
             view_channel=True,
-            connect=(
-                False
-                if new_locked
-                else True
-            ),
-            speak=(
-                False
-                if room["silent"]
-                else None
-            ),
+            connect=False if new_locked else True,
+            speak=False if room["silent"] else None,
         )
 
         update_room_lock(
@@ -1557,7 +1595,7 @@ class RoomControlView(
         label="招待",
         emoji="➕",
         style=discord.ButtonStyle.success,
-        custom_id="room:invite",
+        custom_id="candy:room:invite",
     )
     async def invite(
         self,
@@ -1573,7 +1611,7 @@ class RoomControlView(
         label="全招待解除",
         emoji="➖",
         style=discord.ButtonStyle.secondary,
-        custom_id="room:clear_invites",
+        custom_id="candy:room:clear_invites",
     )
     async def clear_invites(
         self,
@@ -1592,6 +1630,12 @@ class RoomControlView(
         )
 
         if not room:
+
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+
             return
 
         if not owner_or_admin(
@@ -1631,16 +1675,10 @@ class RoomControlView(
                 ):
                     continue
 
-                if (
-                    owner
-                    and target.id == owner.id
-                ):
+                if owner and target.id == owner.id:
                     continue
 
-                if (
-                    bot.user
-                    and target.id == bot.user.id
-                ):
+                if bot.user and target.id == bot.user.id:
                     continue
 
                 try:
@@ -1651,6 +1689,7 @@ class RoomControlView(
                     )
 
                 except discord.HTTPException:
+
                     pass
 
         for target in list(
@@ -1663,16 +1702,10 @@ class RoomControlView(
             ):
                 continue
 
-            if (
-                owner
-                and target.id == owner.id
-            ):
+            if owner and target.id == owner.id:
                 continue
 
-            if (
-                bot.user
-                and target.id == bot.user.id
-            ):
+            if bot.user and target.id == bot.user.id:
                 continue
 
             try:
@@ -1683,6 +1716,7 @@ class RoomControlView(
                 )
 
             except discord.HTTPException:
+
                 pass
 
         await interaction.response.send_message(
@@ -1694,7 +1728,7 @@ class RoomControlView(
         label="部屋削除",
         emoji="🗑️",
         style=discord.ButtonStyle.danger,
-        custom_id="room:delete",
+        custom_id="candy:room:delete",
     )
     async def delete_button(
         self,
@@ -1713,6 +1747,12 @@ class RoomControlView(
         )
 
         if not room:
+
+            await interaction.response.send_message(
+                "❌ 部屋情報が見つかりません。",
+                ephemeral=True,
+            )
+
             return
 
         if not owner_or_admin(
@@ -1775,6 +1815,7 @@ async def on_voice_state_update(
             )
 
             if task:
+
                 task.cancel()
 
             text = member.guild.get_channel(
@@ -1796,6 +1837,7 @@ async def on_voice_state_update(
                     )
 
                 except discord.HTTPException:
+
                     pass
 
                 await send_profile(
@@ -1836,6 +1878,7 @@ async def on_voice_state_update(
                     )
 
                 except discord.HTTPException:
+
                     pass
 
             if len(
@@ -1853,7 +1896,7 @@ async def on_voice_state_update(
 
 @bot.tree.command(
     name="roompanel",
-    description="少人数ルームパネルを設置します",
+    description="Candy 少人数ルームパネルを設置します",
     guild=discord.Object(
         id=GUILD_ID
     ),
@@ -1864,6 +1907,10 @@ async def on_voice_state_update(
 async def roompanel(
     interaction: discord.Interaction,
 ):
+
+    if not interaction.guild:
+
+        return
 
     channel = interaction.guild.get_channel(
         PANEL_CHANNEL_ID
@@ -1882,7 +1929,7 @@ async def roompanel(
         return
 
     embed = discord.Embed(
-        title="🌙 少人数ROOM",
+        title="🍬 Candy 少人数ROOM",
         description=(
             "作りたいお部屋を選んでください✨\n\n"
             "👥 **3人部屋**\n"
@@ -1890,21 +1937,21 @@ async def roompanel(
             "👥 **5人部屋**\n"
             "🔇 **無音部屋**\n"
             "　└ VC＋専用チャットルーム\n\n"
-            "✨ **VCに入っていなくても"
+            "🍬 **VCに入っていなくても"
             "ボタンから部屋を作成できます。**\n\n"
             "誰かが入室すると、"
             "その人のプロフィールが"
-            "専用TCに表示されます🌙"
+            "専用TCに表示されます✨"
         ),
         color=discord.Color.from_rgb(
-            210,
-            150,
             255,
+            170,
+            220,
         ),
     )
 
     embed.set_footer(
-        text="少人数ROOM 🌙"
+        text="Candy 少人数ROOM 🍬"
     )
 
     await channel.send(
@@ -1913,13 +1960,13 @@ async def roompanel(
     )
 
     await interaction.response.send_message(
-        "✅ 少人数ROOMパネルを設置しました。",
+        "✅ Candy 少人数ROOMパネルを設置しました。",
         ephemeral=True,
     )
 
 
 # =========================================================
-# 起動
+# 起動時処理
 # =========================================================
 
 @bot.event
@@ -1930,25 +1977,10 @@ async def on_ready():
         bot.user,
     )
 
-    guild_obj = discord.Object(
-        id=GUILD_ID
+    log.info(
+        "Candy サーバーID：%s",
+        GUILD_ID,
     )
-
-    try:
-
-        await bot.tree.sync(
-            guild=guild_obj
-        )
-
-        log.info(
-            "スラッシュコマンド同期完了"
-        )
-
-    except Exception:
-
-        log.exception(
-            "スラッシュコマンド同期エラー"
-        )
 
 
 # =========================================================
@@ -1980,7 +2012,27 @@ async def main():
 
     await setup_views()
 
+    guild_obj = discord.Object(
+        id=GUILD_ID
+    )
+
     async with bot:
+
+        try:
+
+            await bot.tree.sync(
+                guild=guild_obj
+            )
+
+            log.info(
+                "Candy スラッシュコマンド同期完了"
+            )
+
+        except Exception:
+
+            log.exception(
+                "スラッシュコマンド同期エラー"
+            )
 
         await bot.start(
             TOKEN
